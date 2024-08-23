@@ -19,6 +19,7 @@ exports.sendEmails = async (req, res) => {
     subcategory_name,
     organisation_ids = [],
     organisation_names = [],
+    file_url = null,
   } = req.body;
 
   try {
@@ -40,6 +41,7 @@ exports.sendEmails = async (req, res) => {
           from: `<${process.env.EMAIL_USER}>`,
           to: email,
           text: message,
+          attachments: file_url ? [{ path: file_url }] : [],
         });
 
         successfulEmails.push(email);
@@ -51,21 +53,6 @@ exports.sendEmails = async (req, res) => {
     }
 
     if (successfulEmails.length > 0) {
-      const validCategoryId = category_id || null;
-      const validCategoryName = category_name || null;
-      const validSubcategoryId = subcategory_id || null;
-      const validSubcategoryName = subcategory_name || null;
-      const validOrganisationIds =
-        organisation_ids.length > 0
-          ? `{${organisation_ids
-              .filter((id) => id !== null && id !== undefined)
-              .join(",")}}`
-          : "{}";
-      const validOrganisationNames =
-        organisation_names.length > 0
-          ? `{${organisation_names.join(",")}}`
-          : "{}";
-
       await pool.query(
         `INSERT INTO sent_emails (
           user_id,           
@@ -76,19 +63,21 @@ exports.sendEmails = async (req, res) => {
           organisation_ids, 
           organisation_names,
           email_addresses, 
-          message
+          message,
+          file_url
         ) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           user_id,
-          validCategoryId,
-          validCategoryName,
-          validSubcategoryId,
-          validSubcategoryName,
-          validOrganisationIds,
-          validOrganisationNames,
-          `{${successfulEmails.join(",")}}`,
+          category_id,
+          category_name,
+          subcategory_id,
+          subcategory_name,
+          organisation_ids,
+          organisation_names,
+          successfulEmails,
           message,
+          file_url,
         ]
       );
     }

@@ -29,10 +29,7 @@ bot.on("message", async (msg) => {
   const text = msg.text;
 
   if (text === "Назад") {
-    if (
-      userSteps[chatId]?.step === "awaitingSubcategory" ||
-      userSteps[chatId]?.step === "awaitingMessageSubcategory"
-    ) {
+    if (userSteps[chatId]?.step === "awaitingSubcategory") {
       const categoryButtons = userSteps[chatId].hierarchy.map((category) => [
         { text: category.viewName },
       ]);
@@ -46,10 +43,7 @@ bot.on("message", async (msg) => {
 
       bot.sendMessage(chatId, "Выберите категорию:", options);
       userSteps[chatId].step = "awaitingCategory";
-    } else if (
-      userSteps[chatId]?.step === "awaitingCategory" ||
-      userSteps[chatId]?.step === "awaitingMessage"
-    ) {
+    } else if (userSteps[chatId]?.step === "awaitingCategory") {
       const options = {
         reply_markup: {
           keyboard: [
@@ -81,7 +75,7 @@ bot.on("message", async (msg) => {
       ]);
       const options = {
         reply_markup: {
-          keyboard: [...categoryButtons, [{ text: "Назад" }]],
+          keyboard: [...categoryButtons],
           resize_keyboard: true,
           one_time_keyboard: true,
         },
@@ -113,7 +107,7 @@ bot.on("message", async (msg) => {
       );
       const options = {
         reply_markup: {
-          keyboard: [...subcategoryButtons, [{ text: "Назад" }]],
+          keyboard: [...subcategoryButtons],
           resize_keyboard: true,
           one_time_keyboard: true,
         },
@@ -159,6 +153,7 @@ bot.on("message", async (msg) => {
       } else {
         userSteps[chatId].step = "awaitingMessage";
         userSteps[chatId].selectedSubcategory = selectedSubcategory;
+
         bot.sendMessage(
           chatId,
           "Введите текст сообщения, которое хотите отправить."
@@ -166,56 +161,91 @@ bot.on("message", async (msg) => {
       }
     }
   } else if (userSteps[chatId]?.step === "awaitingMessage") {
-    const selectedCategoryName = userSteps[chatId].selectedCategory.name;
-    const selectedSubcategoryName = userSteps[chatId].selectedSubcategory.name;
-    const selectedOrganisationNames = userSteps[
-      chatId
-    ].selectedSubcategory.children.map((org) => org.name);
-    const emails = userSteps[chatId].selectedSubcategory.children.map(
-      (org) => org.mail
-    );
-    const subject = `Сообщение по теме ${userSteps[chatId].selectedCategory.viewName}`;
-    const message = text;
+    userSteps[chatId].messageText = text;
 
-    console.log("Sending Message with Category Name:", selectedCategoryName);
-    console.log("Selected Subcategory Name:", selectedSubcategoryName);
-    console.log("Selected Organisation Names:", selectedOrganisationNames);
-    console.log("Emails:", emails);
+    const options = {
+      reply_markup: {
+        keyboard: [
+          [{ text: "Прикрепить файл" }, { text: "Отправить без файла" }],
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    };
 
-    try {
-      const response = await axios.post(
-        "http://localhost:3000/api/emails/send",
-        {
-          userId: chatId,
-          emails,
-          subject,
-          message,
-          category_name: selectedCategoryName,
-          subcategory_name: selectedSubcategoryName,
-          organisation_names: selectedOrganisationNames,
-        }
-      );
+    bot.sendMessage(chatId, "Хотите прикрепить файл к сообщению?", options);
+    userSteps[chatId].step = "awaitingFileOption";
+  } else if (userSteps[chatId]?.step === "awaitingFileOption") {
+    if (text === "Прикрепить файл") {
+      bot.sendMessage(chatId, "Пожалуйста, отправьте файл.");
+      userSteps[chatId].step = "awaitingFile";
+    } else if (text === "Отправить без файла") {
+      await sendEmail(chatId, userSteps[chatId].messageText);
+    }
+  } else if (userSteps[chatId]?.step === "awaitingFile") {
+    if (msg.document) {
+      const fileId = msg.document.file_id;
+      const fileUrl = await bot.getFileLink(fileId);
 
-      if (response.data.success) {
-        bot.sendMessage(chatId, "Сообщение успешно отправлено и сохранено!");
-      }
+      userSteps[chatId].fileUrl = fileUrl;
 
-      userSteps[chatId] = { step: "main" };
-      bot.sendMessage(chatId, "Выберите действие:", {
-        reply_markup: {
-          keyboard: [
-            [{ text: "Отправить сообщение" }],
-            [{ text: "Посмотреть историю" }],
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: true,
-        },
-      });
-    } catch (error) {
-      bot.sendMessage(
-        chatId,
-        `Произошла ошибка при отправке сообщения: ${error.message}`
-      );
+      await sendEmail(chatId, userSteps[chatId].messageText, fileUrl);
+    } else {
+      bot.sendMessage(chatId, "Это не файл. Пожалуйста, отправьте документ.");
     }
   }
 });
+
+async function sendEmail(chatId, messageText, fileUrl = null) {
+  const {
+    selectedCategory,
+    selectedSubcategory,
+    selectedSubcategory: { children },
+  } = userSteps[chatId];
+
+  const selectedCategoryId = selectedCategory.id;
+  const selectedSubcategoryId = selectedSubcategory.id;
+  const selectedOrganisationIds = children.map((org) => org.id);
+  const selectedCategoryName = selectedCategory.name;
+  const selectedSubcategoryName = selectedSubcategory.name;
+  const selectedOrganisationNames = children.map((org) => org.name);
+  const emails = children.map((org) => org.mail);
+  const subject = `Сообщение по теме ${selectedCategory.viewName}`;
+
+  try {
+    const response = await axios.post("http://localhost:3000/api/emails/send", {
+      userId: chatId,
+      emails,
+      subject,
+      message: messageText,
+      category_id: selectedCategoryId,
+      subcategory_id: selectedSubcategoryId,
+      organisation_ids: selectedOrganisationIds,
+      category_name: selectedCategoryName,
+      subcategory_name: selectedSubcategoryName,
+      organisation_names: selectedOrganisationNames,
+      file_url: fileUrl,
+    });
+
+    if (response.data.success) {
+      bot.sendMessage(chatId, "Сообщение успешно отправлено и сохранено!");
+    }
+
+    userSteps[chatId] = { step: "main" };
+    bot.sendMessage(chatId, "Выберите действие:", {
+      reply_markup: {
+        keyboard: [
+          [{ text: "Отправить сообщение" }],
+          [{ text: "Посмотреть историю" }],
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: true,
+      },
+    });
+  } catch (error) {
+    bot.sendMessage(
+      chatId,
+      `Произошла ошибка при отправке сообщения: ${error.message}`
+    );
+  }
+}
